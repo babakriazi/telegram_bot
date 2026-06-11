@@ -7,8 +7,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from fastapi import FastAPI, Request
-
+from fastapi import FastAPI, Request, Response
+from fastapi.responses import PlainTextResponse
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
 RENDER_EXTERNAL_URL = os.environ.get("RENDER_EXTERNAL_URL", "").strip().rstrip("/")
@@ -659,7 +659,10 @@ async def shutdown_event() -> None:
         print("Scheduler stopped.")
 
 
+# ==================== Routes for Uptime Monitoring ====================
+
 @app.get("/")
+@app.head("/")
 async def root() -> Dict[str, Any]:
     return {
         "status": "up",
@@ -671,9 +674,29 @@ async def root() -> Dict[str, Any]:
 
 
 @app.get("/health")
-async def health() -> Dict[str, str]:
-    return {"status": "healthy"}
+@app.head("/health")
+async def health():
+    """سبک‌ترین پاسخ برای UptimeRobot و مانیتورها"""
+    return Response(
+        content="OK",
+        status_code=200,
+        media_type="text/plain",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        }
+    )
 
+
+@app.get("/ping")
+@app.head("/ping")
+async def ping():
+    """مسیر خیلی سبک برای مانیتورینگ"""
+    return Response(status_code=200)
+
+
+# =====================================================================
 
 @app.post("/webhook")
 async def telegram_webhook(request: Request) -> Dict[str, bool]:
