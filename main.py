@@ -1,4 +1,5 @@
 import os
+import html
 import sqlite3
 import asyncio
 import httpx
@@ -13,7 +14,7 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
 RENDER_EXTERNAL_URL = os.environ.get("RENDER_EXTERNAL_URL", "").strip().rstrip("/")
 TELEGRAM_API_BASE = f"https://api.telegram.org/bot{BOT_TOKEN}"
 GATEIO_API_BASE = "https://api.gateio.ws/api/v4"
-# مسیر دیتابیس برای رندر (اگر دیسک نباشد در لوکال ساخته می‌شود)
+# اصلاح خطای سینتکس در مسیر دیتابیس
 DB_PATH = "[/mnt/data/bot_data.db"](https://storage.gapgpt.app/media/code_interpreter/41f3cde9-4b72-49e4-8434-f3dc06b45508/bot_data.db%22) if os.path.exists("/mnt/data") else "bot_data.db"
 DEFAULT_SYMBOL = "ETH_USDT"
 AUTO_SEND_INTERVAL_MINUTES = 30
@@ -22,7 +23,7 @@ SUPPORTED_COINS = ["BTC", "SOL", "TON", "ARB", "POL", "BNB", "XRP", "ADA", "AVAX
 app = FastAPI()
 scheduler = AsyncIOScheduler()
 
-# --- مدیریت دیتابیس (SQLite) ---
+# --- مدیریت دیتابیس ---
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     conn.execute("CREATE TABLE IF NOT EXISTS active_chats (chat_id INTEGER PRIMARY KEY)")
@@ -41,11 +42,10 @@ def get_all_chats() -> List[int]:
     try:
         with sqlite3.connect(DB_PATH) as conn:
             return [row[0] for row in conn.execute("SELECT chat_id FROM active_chats").fetchall()]
-    except Exception as e:
-        print(f"DB Error: {e}")
+    except:
         return []
 
-# --- محاسبات تکنیکال ---
+# --- توابع تحلیل تکنیکال ---
 def calculate_ema(data: List[float], period: int) -> Optional[float]:
     if len(data) < period: return None
     multiplier = 2 / (period + 1)
@@ -70,19 +70,20 @@ def calculate_rsi(data: List[float], period: int = 14) -> Optional[float]:
     rs = avg_gain / avg_loss
     return 100 - (100 / (1 + rs))
 
-async def fetch_candles(symbol: str):
+async def fetch_candles(symbol: str, interval: str = "1h", limit: int = 200):
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(timeout=15) as client:
             url = f"{GATEIO_API_BASE}/spot/candlesticks"
-            params = {"currency_pair": symbol, "interval": "1h", "limit": "250"}
+            params = {"currency_pair": symbol, "interval": interval, "limit": limit}
             resp = await client.get(url, params=params)
             return resp.json()
-    except: return []
+    except Exception as e:
+        return []
 
 async def build_analysis_message(symbol: str) -> str:
-    candles = await fetch_candles(symbol)
-    if not candles or len(candles) < 200:
-        return f"❌ خطا در دریافت داده‌های {symbol}"
+    candles = await fetch_candles(symbol, interval="1h")
+    if not candles or len(candles) < 100:
+        return f"❌ خطا در دریافت داده‌های بازار برای {symbol}."
     
     closes = [float(c[2]) for c in candles]
     current_price = closes[-1]
@@ -91,16 +92,21 @@ async def build_analysis_message(symbol: str) -> str:
     ema200 = calculate_ema(closes, 200)
     rsi = calculate_rsi(closes, 14)
     
-    trend = "صعودی 🟢" if (ema20 and current_price > ema20 and ema20 > (ema50 or 0)) else "نزولی 🔴"
-    rsi_val = f"{rsi:.1f}" if rsi else "N/A"
+    trend_score = 0
+    if ema20 and current_price > ema20: trend_score += 1
+    if ema20 and ema50 and ema20 > ema50: trend_score += 2
+    if ema200 and current_price > ema200: trend_score += 2
+    
+    trend_label = "صعودی 🟢" if trend_score >= 3 else "نزولی 🔴" if trend_score <= 1 else "خنثی 🟡"
+    rsi_status = "اشباع خرید ⚠️" if rsi and rsi > 70 else "اشباع فروش ✅" if rsi and rsi < 30 else "معمولی"
 
     text = (
-        f"📊 <b>تحلیل {symbol.split('_')[0]}</b>\n"
+        f"📊 <b>تحلیل اختصاصی {symbol.split('_')[0]}</b>\n"
         f"━━━━━━━━━━━━━━\n"
         f"💵 قیمت: <code>{current_price:,.2f}</code>\n"
-        f"📈 روند: <b>{trend}</b>\n"
-        f"🧭 شاخص RSI: <code>{rsi_val}</code>\n"
-        f"📉 میانگین EMA20: <code>{ema20:,.1f}</code>\n"
+        f"📈 روند کلی: <b>{trend_label}</b>\n"
+        f"🧭 شاخص RSI: <code>{rsi:.2f}</code> ({rsi_status})\n"
+        f"📉 میانگین (EMA20): <code>{ema20:,.1f}</code>\n"
         f"🕒 زمان: {datetime.now().strftime('%H:%M')}\n"
         f"━━━━━━━━━━━━━━"
     )
@@ -110,9 +116,9 @@ async def build_analysis_message(symbol: str) -> str:
 def main_keyboard():
     return {
         "inline_keyboard": [
-            [{"text": "📊 تحلیل لحظه‌ای ETH", "callback_data": "analyze_ETH_USDT"}],
-            [{"text": "🪙 لیست ارزهای دیگر", "callback_data": "list_coins"}],
-            [{"text": "⏹ توقف تحلیل خودکار", "callback_data": "stop"}, {"text": "▶️ شروع مجدد", "callback_data": "start"}]
+            [{"text": "▶️ Start", "callback_data": "start"}, {"text": "⏹ Stop", "callback_data": "stop"}],
+            [{"text": "📊 تحلیل الان ETH", "callback_data": "analyze_ETH_USDT"}, {"text": "🪙 ارزهای دیگر", "callback_data": "list_coins"}],
+            [{"text": "ℹ️ Help", "callback_data": "help"}]
         ]
     }
 
@@ -123,10 +129,10 @@ def coins_keyboard():
         if i+1 < len(SUPPORTED_COINS):
             row.append({"text": SUPPORTED_COINS[i+1], "callback_data": f"analyze_{SUPPORTED_COINS[i+1]}_USDT"})
         buttons.append(row)
-    buttons.append([{"text": "🔙 بازگشت", "callback_data": "main_menu"}])
+    buttons.append([{"text": "🔙 بازگشت به منو", "callback_data": "main_menu"}])
     return {"inline_keyboard": buttons}
 
-# --- تلگرام API ---
+# --- هندلرهای تلگرام ---
 async def send_tg(chat_id, text, keyboard=None):
     async with httpx.AsyncClient() as client:
         await client.post(f"{TELEGRAM_API_BASE}/sendMessage", 
@@ -137,12 +143,11 @@ async def edit_tg(chat_id, msg_id, text, keyboard=None):
         await client.post(f"{TELEGRAM_API_BASE}/editMessageText", 
                          json={"chat_id": chat_id, "message_id": msg_id, "text": text, "parse_mode": "HTML", "reply_markup": keyboard})
 
-# --- وظایف دوره‌ای ---
 async def handle_periodic_tasks():
     chats = get_all_chats()
     if not chats: return
     analysis = await build_analysis_message(DEFAULT_SYMBOL)
-    message = f"⏰ <b>تحلیل خودکار اتریوم:</b>\n\n{analysis}"
+    message = f"⏰ <b>تحلیل دوره‌ای اتریوم:</b>\n\n{analysis}"
     for cid in chats:
         try: await send_tg(cid, message, main_keyboard())
         except: pass
@@ -150,31 +155,30 @@ async def handle_periodic_tasks():
 # --- مسیرهای FastAPI ---
 @app.api_route("/health", methods=["GET", "HEAD"])
 async def health_check():
-    return {"status": "up", "version": APP_VERSION}
+    # این بخش مشکل 405 مانیتورینگ را حل می‌کند
+    return {"status": "ok", "version": APP_VERSION, "db": DB_PATH}
 
 @app.post("/webhook")
 async def webhook(request: Request):
     data = await request.json()
-    
     if "message" in data:
         msg = data["message"]
         chat_id = msg["chat"]["id"]
-        if msg.get("text") == "/start":
+        text = msg.get("text", "")
+        if text == "/start":
             add_chat(chat_id)
-            await send_tg(chat_id, f"بابی خوش آمدی! 🚀\nنسخه: {APP_VERSION}\nتحلیل خودکار ETH فعال شد.", main_keyboard())
-            
+            await send_tg(chat_id, f"بابی خوش آمدی! 👋\nنسخه: <code>{APP_VERSION}</code>\nدیتابیس فعال شد.", main_keyboard())
     elif "callback_query" in data:
         cb = data["callback_query"]
         chat_id = cb["message"]["chat"]["id"]
         msg_id = cb["message"]["message_id"]
         cb_data = cb["data"]
-        
         if cb_data == "start":
             add_chat(chat_id)
             await send_tg(chat_id, "✅ تحلیل خودکار فعال شد.")
         elif cb_data == "stop":
             remove_chat(chat_id)
-            await send_tg(chat_id, "⏹ تحلیل خودکار متوقف شد.")
+            await send_tg(chat_id, "⏹ متوقف شد.")
         elif cb_data == "list_coins":
             await edit_tg(chat_id, msg_id, "🪙 ارز مورد نظر را انتخاب کن:", coins_keyboard())
         elif cb_data == "main_menu":
@@ -183,7 +187,6 @@ async def webhook(request: Request):
             symbol = cb_data.replace("analyze_", "")
             res = await build_analysis_message(symbol)
             await send_tg(chat_id, res, main_keyboard())
-            
     return {"ok": True}
 
 @app.on_event("startup")
@@ -191,7 +194,6 @@ async def startup_event():
     init_db()
     async with httpx.AsyncClient() as client:
         await client.post(f"{TELEGRAM_API_BASE}/setWebhook", json={"url": f"{RENDER_EXTERNAL_URL}/webhook"})
-    
     if not scheduler.running:
         scheduler.add_job(handle_periodic_tasks, "interval", minutes=AUTO_SEND_INTERVAL_MINUTES)
         scheduler.start()
