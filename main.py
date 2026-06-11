@@ -8,7 +8,6 @@ from typing import Any, Dict, List, Optional, Tuple
 import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI, Request, Response
-from fastapi.responses import PlainTextResponse
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
 RENDER_EXTERNAL_URL = os.environ.get("RENDER_EXTERNAL_URL", "").strip().rstrip("/")
@@ -659,7 +658,7 @@ async def shutdown_event() -> None:
         print("Scheduler stopped.")
 
 
-# ==================== Routes for Uptime Monitoring ====================
+# ==================== UptimeRobot Support ====================
 
 @app.get("/")
 @app.head("/")
@@ -676,7 +675,7 @@ async def root() -> Dict[str, Any]:
 @app.get("/health")
 @app.head("/health")
 async def health():
-    """سبک‌ترین پاسخ برای UptimeRobot و مانیتورها"""
+    """پاسخ مناسب برای UptimeRobot (HEAD + GET)"""
     return Response(
         content="OK",
         status_code=200,
@@ -692,7 +691,7 @@ async def health():
 @app.get("/ping")
 @app.head("/ping")
 async def ping():
-    """مسیر خیلی سبک برای مانیتورینگ"""
+    """مسیر خیلی سبک"""
     return Response(status_code=200)
 
 
